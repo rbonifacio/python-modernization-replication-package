@@ -21,6 +21,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from stats_utils import spearman, bootstrap_median_ci
+
 # ── paths ─────────────────────────────────────────────────────────────────────
 BASE  = Path(__file__).parent.parent
 DATA  = BASE / "dataset" / "final_ds.csv"
@@ -217,6 +219,42 @@ def main():
     fig.savefig(FIGS / "contributor_lorenz.pdf")
     plt.close()
     print(f"  Wrote {FIGS / 'contributor_lorenz.pdf'}")
+
+    # ── Hypothesis testing ────────────────────────────────────────────────────
+    print("\n[5/4] Hypothesis testing")
+
+    # Spearman: number of contributors ~ total transformations per project
+    print("\n  5a. Does contributor count correlate with transformation volume?")
+    print("      H₀: ρ = 0  (no monotonic relationship)")
+    spearman(
+        stats["contributors"].values,
+        stats["transformations"].values,
+        label_x="contributors per project",
+        label_y="transformations per project",
+    )
+
+    # Spearman: top-1 contributor share ~ Gini
+    # A sanity check: projects where one person dominates should have high Gini.
+    print("\n  5b. Does top-1 contributor share correlate with Gini coefficient?")
+    print("      H₀: ρ = 0  (sanity check — expected strong positive correlation)")
+    spearman(
+        stats["top1_pct"].values,
+        stats["gini"].values,
+        label_x="top-1 contributor share (%)",
+        label_y="Gini coefficient",
+    )
+
+    # Bootstrap CI for the median Gini across projects
+    print("\n  5c. Bootstrap 95% CI for the median Gini coefficient (2 000 resamples)")
+    lo, hi = bootstrap_median_ci(stats["gini"].values, n_boot=2000)
+    med    = stats["gini"].median()
+    print(f"      Median Gini : {med:.3f}  (95% CI: [{lo:.3f}, {hi:.3f}])")
+
+    # Bootstrap CI for the median % of contributors needed for 80% of transformations
+    print("\n  5d. Bootstrap 95% CI for median % of contributors covering 80% of work")
+    lo2, hi2 = bootstrap_median_ci(stats["pct_n_for_80pct"].values, n_boot=2000)
+    med2     = stats["pct_n_for_80pct"].median()
+    print(f"      Median pct_80 : {med2:.1f}%  (95% CI: [{lo2:.1f}%, {hi2:.1f}%])")
 
     print("\nDone.\n")
 

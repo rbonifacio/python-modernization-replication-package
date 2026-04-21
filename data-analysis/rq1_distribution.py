@@ -20,6 +20,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from stats_utils import mann_whitney, kruskal_wallis
+
 # ── paths ─────────────────────────────────────────────────────────────────────
 BASE = Path(__file__).parent.parent
 DATA = BASE / "dataset" / "final_ds.csv"
@@ -165,6 +167,31 @@ def main():
     plt.savefig(out2, dpi=300)
     plt.close()
     print(f"  Wrote {out2}")
+
+    # ── Hypothesis testing ────────────────────────────────────────────────────
+    print("\n[7/6] Hypothesis testing")
+
+    # Mann-Whitney U: outlier repos vs. the rest
+    # H₀: the two dominant repos (mypy, chia-blockchain) are drawn from the same
+    #     per-repo transformation-count distribution as the remaining projects.
+    print("\n  7a. Do the two largest repos differ from the rest?")
+    print("      H₀: no difference in per-repo transformation counts")
+    outlier_counts  = per_repo[per_repo.index.isin(outliers)].values
+    rest_counts     = per_repo[~per_repo.index.isin(outliers)].values
+    mann_whitney(
+        outlier_counts, rest_counts,
+        label_a="outliers (mypy + chia)",
+        label_b="remaining repos",
+    )
+
+    # Kruskal-Wallis across the five most common transformation types
+    # H₀: per-repo transformation counts are equal across annotation categories.
+    print("\n  7b. Do transformation counts differ across annotation types?")
+    print("      H₀: per-commit counts are equal across the top-5 refactoring types")
+    top5_types  = df["refactoring_type"].value_counts().head(5).index.tolist()
+    kw_groups   = [df[df["refactoring_type"] == t].groupby("commit_id").size().values
+                   for t in top5_types]
+    kruskal_wallis(kw_groups, [t[:45] for t in top5_types])
 
     print("\nDone.\n")
 

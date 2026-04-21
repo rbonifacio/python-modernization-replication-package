@@ -20,7 +20,10 @@ tables/top_commits.tex                    – top-20 commits by transformation c
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+
+from stats_utils import mann_whitney
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 BASE   = Path(__file__).parent.parent
@@ -124,6 +127,38 @@ def main():
     )
     OUT_TABLE_COMMITS.write_text(latex_commits, encoding="utf-8")
     print(f"\n  Wrote {OUT_TABLE_COMMITS}")
+
+    # ── Hypothesis testing: bulk vs. regular commits ──────────────────────────
+    print("\n[4/3] Hypothesis testing: are bulk commits a distinct population?")
+    print("      H₀: no difference in transformation counts between bulk and regular commits")
+    print("      Bulk = top-10% by transformation count; regular = bottom-90%")
+
+    cutoff = commit_summary["Total"].quantile(0.90)
+    bulk    = commit_summary.loc[commit_summary["Total"] >= cutoff, "Total"].values
+    regular = commit_summary.loc[commit_summary["Total"] <  cutoff, "Total"].values
+    print(f"      Cutoff (90th percentile): {cutoff:.0f} transformations/commit")
+
+    mann_whitney(
+        bulk, regular,
+        label_a=f"bulk commits (≥{cutoff:.0f} transformations, n={len(bulk):,})",
+        label_b=f"regular commits (<{cutoff:.0f} transformations, n={len(regular):,})",
+    )
+
+    # Within bulk commits: do production commits differ from test commits?
+    print("\n      Within-bulk: production vs. test transformation share")
+    print("      H₀: no difference between bulk commits touching production vs. test code")
+    bulk_ids = commit_summary.loc[commit_summary["Total"] >= cutoff, "commit_id"]
+    df_bulk  = df[df["commit_id"].isin(bulk_ids)]
+    prod_bulk = df_bulk[df_bulk["is_test_code"] == "production"].groupby("commit_id").size().values
+    test_bulk = df_bulk[df_bulk["is_test_code"] == "test"].groupby("commit_id").size().values
+    if len(prod_bulk) > 0 and len(test_bulk) > 0:
+        mann_whitney(
+            prod_bulk, test_bulk,
+            label_a="bulk commits — production transformations",
+            label_b="bulk commits — test transformations",
+        )
+    else:
+        print("      Insufficient data for production/test split within bulk commits.")
 
     print("\nDone.\n")
 

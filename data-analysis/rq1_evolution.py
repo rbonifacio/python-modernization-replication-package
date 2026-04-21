@@ -18,6 +18,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from stats_utils import modified_mann_kendall
+
 # ── paths ─────────────────────────────────────────────────────────────────────
 BASE    = Path(__file__).parent.parent
 DATA    = BASE / "dataset" / "final_ds.csv"
@@ -118,6 +120,20 @@ def main():
     print(f"\n  Wrote {OUT_FIG}")
 
     monthly_wide.tail(124).to_csv(BASE / "monthly_tail.csv")
+
+    # ── Hypothesis testing: Mann-Kendall trend test ───────────────────────────
+    print("\n[4/3] Hypothesis testing: monotonic trend in monthly transformation counts")
+    print("      H₀: no monotonic trend over time")
+    print("      Test: Hamed-Rao modified Mann-Kendall (corrects for autocorrelation)")
+
+    modified_mann_kendall(
+        monthly_wide["production"].values,
+        label="production code (monthly)",
+    )
+    modified_mann_kendall(
+        monthly_wide["test"].values,
+        label="test code (monthly)",
+    )
 
     print("\nDone.\n")
 
