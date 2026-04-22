@@ -13,6 +13,9 @@ the full history is analysed with -a instead.
 Progress is persisted in a checkpoint file so that an interrupted run (e.g.
 machine shutdown) can be resumed exactly where it left off.
 
+Each project's output is written to <output-dir>/logs/<project>.log so that
+parallel runs don't produce interleaved terminal noise.
+
 Usage examples
 --------------
   # Process all repos under /data/repos, write results to /data/output
@@ -20,6 +23,10 @@ Usage examples
 
   # Resume a previously interrupted run (checkpoint is read automatically)
   python Driver.py /data/repos --output-dir /data/output
+
+  # Run 4 projects in parallel (tune --jvm-args to fit available RAM)
+  python Driver.py /data/repos --output-dir /data/output \\
+      --workers 4 --jvm-args "-Xmx8g" --batch-size 100
 
   # Use a custom checkpoint file location
   python Driver.py /data/repos --output-dir /data/output \\
@@ -30,10 +37,11 @@ import argparse
 import json
 import subprocess
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
-# JVM memory allocation suitable for a 128 GB machine
+# Defaults — override via CLI flags
 _JVM_ARGS   = "-Xmx96g"
 _BATCH_SIZE = 200
 
@@ -135,36 +143,43 @@ def build_range_args(repo: Path) -> list[str] | None:
 
 
 # ---------------------------------------------------------------------------
-# Per-project runner
+# Per-project runner  (executed inside a worker process)
 # ---------------------------------------------------------------------------
 
-def run_project(project: Path, output_dir: Path) -> bool:
+def run_project(project: Path, output_dir: Path,
+                jvm_args: str, batch_size: int) -> bool:
     """
     Invoke run_refactoringminer.py for *project* covering commits from
-    2015-01-01 to HEAD.  Results land in <output_dir>/results/<project_name>/.
+    2015-01-01 to HEAD.  All output is written to <output_dir>/logs/<name>.log.
     Returns True on success (exit code 0), False otherwise.
     """
     range_args = build_range_args(project)
     if range_args is None:
-        print(f"[{_ts()}] [skip] {project.name}: no commits found after {_SINCE_DATE}",
-              flush=True)
+        log_dir = output_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"{project.name}.log"
+        with open(log_file, "w", encoding="utf-8") as lf:
+            lf.write(f"[{_ts()}] skip: no commits found after {_SINCE_DATE}\n")
         return True  # nothing to do — not a failure
 
     cmd = [
         sys.executable,
         str(_COLLECT_SCRIPT),
         *range_args,
-        f"--jvm-args={_JVM_ARGS}",
-        "--batch-size", str(_BATCH_SIZE),
+        f"--jvm-args={jvm_args}",
+        "--batch-size", str(batch_size),
     ]
 
-    print(f"\n{'='*70}", flush=True)
-    print(f"[{_ts()}] Processing: {project.name}", flush=True)
-    print(f"  command : {' '.join(cmd)}", flush=True)
-    print(f"  cwd     : {output_dir}", flush=True)
-    print(f"{'='*70}", flush=True)
+    log_dir = output_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"{project.name}.log"
 
-    result = subprocess.run(cmd, cwd=str(output_dir))
+    with open(log_file, "w", encoding="utf-8") as lf:
+        lf.write(f"[{_ts()}] command: {' '.join(cmd)}\n")
+        lf.write(f"[{_ts()}] cwd: {output_dir}\n\n")
+        lf.flush()
+        result = subprocess.run(cmd, cwd=str(output_dir), stdout=lf, stderr=lf)
+
     return result.returncode == 0
 
 
@@ -198,6 +213,30 @@ def parse_args() -> argparse.Namespace:
         metavar="PATH",
         help="Path to the checkpoint JSON file "
              "(default: <output-dir>/checkpoint.json)",
+    )
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Number of projects to process in parallel (default: 1). "
+             "With N workers, each JVM gets roughly total_RAM/N — "
+             "tune --jvm-args accordingly.",
+    )
+    p.add_argument(
+        "--jvm-args",
+        default=_JVM_ARGS,
+        metavar="ARGS",
+        help=f"JVM arguments for each worker (default: '{_JVM_ARGS}'). "
+             "When running multiple workers, lower this proportionally "
+             "to available RAM, e.g. --workers 4 --jvm-args '-Xmx24g'.",
+    )
+    p.add_argument(
+        "--batch-size",
+        type=int,
+        default=_BATCH_SIZE,
+        metavar="N",
+        help=f"Max commits per JAR invocation to avoid OOM (default: {_BATCH_SIZE}).",
     )
     return p.parse_args()
 
@@ -233,34 +272,48 @@ def main() -> None:
     pending = [p for p in projects if p.name not in completed_set]
     skipped = len(projects) - len(pending)
 
+    workers = max(1, args.workers)
+
     print(f"[{_ts()}] Found {len(projects)} project(s) in {input_dir}")
     if skipped:
         print(f"[{_ts()}] Skipping {skipped} already-completed project(s) "
               f"(checkpoint: {checkpoint_path})")
-    print(f"[{_ts()}] {len(pending)} project(s) to process\n")
+    print(f"[{_ts()}] {len(pending)} project(s) to process "
+          f"({workers} worker(s), jvm-args: {args.jvm_args})")
+    print(f"[{_ts()}] Logs: {output_dir / 'logs'}\n")
 
-    for i, project in enumerate(pending, start=1):
-        print(f"[{_ts()}] [{i}/{len(pending)}] Starting {project.name}")
+    done_count = 0
 
-        success = run_project(project, output_dir)
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        future_to_project = {
+            pool.submit(run_project, p, output_dir, args.jvm_args, args.batch_size): p
+            for p in pending
+        }
 
-        if success:
-            state["completed"].append(project.name)
-            # Remove from failed list if it was retried successfully
-            if project.name in failed_set:
-                state["failed"] = [n for n in state["failed"] if n != project.name]
-                failed_set.discard(project.name)
-            print(f"[{_ts()}] [{i}/{len(pending)}] Done: {project.name}", flush=True)
-        else:
-            state["failed"].append(project.name)
-            failed_set.add(project.name)
-            print(
-                f"[{_ts()}] [{i}/{len(pending)}] FAILED: {project.name} "
-                f"(will be listed in checkpoint for manual review)",
-                flush=True,
-            )
+        for future in as_completed(future_to_project):
+            project = future_to_project[future]
+            done_count += 1
+            prefix = f"[{_ts()}] [{done_count}/{len(pending)}]"
 
-        save_checkpoint(checkpoint_path, state)
+            try:
+                success = future.result()
+            except Exception as exc:
+                success = False
+                print(f"{prefix} ERROR: {project.name} raised {exc}", flush=True)
+
+            if success:
+                state["completed"].append(project.name)
+                if project.name in failed_set:
+                    state["failed"] = [n for n in state["failed"] if n != project.name]
+                    failed_set.discard(project.name)
+                print(f"{prefix} Done:   {project.name}", flush=True)
+            else:
+                state["failed"].append(project.name)
+                failed_set.add(project.name)
+                print(f"{prefix} FAILED: {project.name} "
+                      f"(see logs/{project.name}.log)", flush=True)
+
+            save_checkpoint(checkpoint_path, state)
 
     # Final summary
     print(f"\n{'='*70}")
