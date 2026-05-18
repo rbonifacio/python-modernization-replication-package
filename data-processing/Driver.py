@@ -6,7 +6,7 @@ Converts raw RefactoringMiner JSON output into the analysis-ready dataset.
 Steps
 -----
   Step 1  json_to_csv               – merge all JSON result files into a single
-                                      flat CSV (dataset/refactorings.csv)
+                                      flat CSV (dataset/full_ds.csv)
   Step 2  consolidate_type_annotations – cross-commit classification and
                                       deduplication → dataset/final_ds.csv
 

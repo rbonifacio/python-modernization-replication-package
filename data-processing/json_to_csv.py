@@ -8,7 +8,7 @@ within a single cell, keeping the row count 1-to-1 with refactorings.
 
 Usage (from the repo root):
     python3 scripts/json_to_csv.py
-    python3 scripts/json_to_csv.py --input dataset/all-results --output dataset/refactorings.csv
+    python3 scripts/json_to_csv.py --input dataset/all-results --output dataset/full_ds.csv
 """
 
 import argparse
@@ -163,8 +163,8 @@ def main():
         help="Root directory containing experiment sub-folders (default: dataset/all-results)",
     )
     parser.add_argument(
-        "--output", default=str(_root / "dataset" / "refactorings.csv"),
-        help="Output CSV file path (default: dataset/refactorings.csv)",
+        "--output", default=str(_root / "dataset" / "full_ds.csv"),
+        help="Output CSV file path (default: dataset/full_ds.csv)",
     )
     args = parser.parse_args()
 
