@@ -99,10 +99,10 @@ def main():
     for k, v in summary.items():
         print(f"    {k:12s} = {v:>12.2f}" if isinstance(v, float) else f"    {k:12s} = {v:>12}")
 
-    outliers = [
-        "https://github.com/Chia-Network/chia-blockchain.git",
-        "https://github.com/python/mypy.git",
-    ]
+    # the two repositories with the most transformations
+    outliers = per_repo.nlargest(2).index.tolist()
+    outlier_names = [o.rstrip("/").removesuffix(".git").rsplit("/", 1)[-1] for o in outliers]
+    outlier_share = 100 * per_repo[outliers].sum() / per_repo.sum()
     df_filtered = df[~df["repository"].isin(outliers)]
     per_repo_f  = df_filtered.groupby("repository").size().rename("Total")
 
@@ -117,8 +117,8 @@ def main():
         "max":        per_repo_f.max(),
     }
 
-    print("\n  Excluding chia-blockchain and mypy (the two largest repositories,")
-    print("  which together account for ~43% of all transformations):")
+    print(f"\n  Excluding {outlier_names[0]} and {outlier_names[1]} (the two largest repositories,")
+    print(f"  which together account for {outlier_share:.1f}% of all transformations):")
     for k, v in summary_f.items():
         print(f"    {k:12s} = {v:>12.2f}" if isinstance(v, float) else f"    {k:12s} = {v:>12}")
 
@@ -172,7 +172,7 @@ def main():
     print("\n[7/6] Hypothesis testing")
 
     # Mann-Whitney U: outlier repos vs. the rest
-    # H₀: the two dominant repos (mypy, chia-blockchain) are drawn from the same
+    # H₀: the two dominant repos are drawn from the same
     #     per-repo transformation-count distribution as the remaining projects.
     print("\n  7a. Do the two largest repos differ from the rest?")
     print("      H₀: no difference in per-repo transformation counts")
@@ -180,7 +180,7 @@ def main():
     rest_counts     = per_repo[~per_repo.index.isin(outliers)].values
     mann_whitney(
         outlier_counts, rest_counts,
-        label_a="outliers (mypy + chia)",
+        label_a=f"outliers ({outlier_names[0]} + {outlier_names[1]})",
         label_b="remaining repos",
     )
 

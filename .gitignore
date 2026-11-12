@@ -44,3 +44,9 @@ jar/
 
 # ── OS ───────────────────────────────────────────────────────────────────────
 .DS_Store
+
+# ── Paper sources and internal notes (kept in a separate private repository) ─
+paper-nova-submissao*/
+python-paper/
+revisao-dataset-*.md
+inspecao-pattern-matching-*.md
